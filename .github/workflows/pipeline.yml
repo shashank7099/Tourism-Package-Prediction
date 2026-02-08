@@ -60,7 +60,9 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "Github Actions"
           
-          # Ensure we don't accidentally add the Hugging Face repo metadata
-          git add .
-          git commit -m "Update training artifacts (train/test/model) [skip ci]" || echo "No changes to commit"
+          rm -f train.csv test.csv model.pkl
+          
+          # Add the new organized folder
+          git add tourism_project/model_building/
+          git commit -m "Organize training artifacts in model_building folder [skip ci]" || echo "No changes"
           git push origin main
