@@ -1,0 +1,42 @@
+name: Tourism MLOps Workflow
+
+on:
+  push:
+    branches:
+      - main  # Automatically trigger on push to main
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: Install Dependencies
+        run: |
+          pip install pandas xgboost joblib huggingface_hub scikit-learn
+
+      - name: Run ML Pipeline (Train & Register)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: python tourism_project/run_pipeline.py
+
+      - name: Sync Deployment to HF Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "Github Actions"
+          
+          # Clone the space, copy deployment files, and push
+          git clone https://huggingface.co/spaces/shashankksaxena/tourism-prediction sync_folder
+          cp tourism_project/deployment/* sync_folder/
+          cd sync_folder
+          git add .
+          git commit -m "Automated deployment update from GitHub Actions" || echo "No changes to commit"
+          git push https://shashankksaxena:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shashankksaxena/tourism-prediction main
