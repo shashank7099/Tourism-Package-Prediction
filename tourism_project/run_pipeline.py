@@ -124,8 +124,19 @@ pd.concat([X_train_res, y_train_res], axis=1).to_csv(train_file, index=False)
 pd.concat([X_test, y_test], axis=1).to_csv(test_file, index=False)
 
 print("[STEP D] Uploading processed datasets to Hugging Face...")
-api.upload_file(train_file, "train.csv", f"{REPO_ID}/tourism-data", repo_type="dataset")
-api.upload_file(test_file, "test.csv", f"{REPO_ID}/tourism-data", repo_type="dataset")
+# FIXED: Using explicit keyword arguments
+api.upload_file(
+    path_or_fileobj=train_file, 
+    path_in_repo="train.csv", 
+    repo_id=f"{REPO_ID}/tourism-data", 
+    repo_type="dataset"
+)
+api.upload_file(
+    path_or_fileobj=test_file, 
+    path_in_repo="test.csv", 
+    repo_id=f"{REPO_ID}/tourism-data", 
+    repo_type="dataset"
+)
 print("[STEP D] Dataset upload complete.")
 
 # =========================
@@ -164,6 +175,7 @@ model_file = os.path.join(artifact_path, "model.pkl")
 joblib.dump(model, model_file)
 
 print("[STEP F] Uploading model to Hugging Face Model Hub...")
+# FIXED: Using explicit keyword arguments
 api.upload_file(
     path_or_fileobj=model_file,
     path_in_repo="model.pkl",
@@ -172,4 +184,4 @@ api.upload_file(
 )
 
 print("\n================ PIPELINE COMPLETED SUCCESSFULLY ================")
-print("[SUCCESS] Balanced model trained, evaluated, and registered 🚀")
+print("[SUCCESS] Balanced model trained, evaluated, and registered ")
