@@ -33,10 +33,22 @@ jobs:
           git config --global user.email "actions@github.com"
           git config --global user.name "Github Actions"
           
-          # Clone the space, copy deployment files, and push
+          # 1. Clone the Space
           git clone https://huggingface.co/spaces/shashankksaxena/tourism-prediction sync_folder
+          
+          # 2. Copy deployment files (Dockerfile, app.py, requirements.txt)
           cp tourism_project/deployment/* sync_folder/
+          
+          # 3. Push to Hugging Face
           cd sync_folder
           git add .
           git commit -m "Automated deployment update from GitHub Actions" || echo "No changes to commit"
           git push https://shashankksaxena:${{ secrets.HF_TOKEN }}@huggingface.co/spaces/shashankksaxena/tourism-prediction main
+
+      - name: Push updates back to GitHub Main Branch
+        run: |
+          git config --global user.email "actions@github.com"
+          git config --global user.name "Github Actions"
+          git add .
+          git commit -m "Update training artifacts [skip ci]" || echo "No changes to commit"
+          git push origin main
