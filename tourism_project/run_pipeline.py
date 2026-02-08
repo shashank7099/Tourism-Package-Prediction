@@ -1,16 +1,12 @@
 """
 Tourism Prediction Pipeline
 
-This script automates the end-to-end workflow for a tourism product prediction project:
+This script automates the end-to-end workflow:
 1. Sync raw data to Hugging Face Dataset Hub.
-2. Load and clean the dataset (handle missing values, fix typos).
-3. Split the dataset into train and test sets and upload them to HF.
-4. Encode categorical features using LabelEncoder.
-5. Train an XGBoost classifier on the training data.
-6. Evaluate the model on the test set using F1 score.
-7. Save and register the trained model to the Hugging Face Model Hub.
-
-The pipeline is designed for scalability and reproducibility.
+2. Load and clean the dataset.
+3. Split the dataset, save artifacts to 'tourism_project/model_building', and upload to HF.
+4. Train an XGBoost classifier.
+5. Register the model to the Hugging Face Model Hub.
 """
 
 import pandas as pd
@@ -23,13 +19,16 @@ from sklearn.metrics import f1_score
 from huggingface_hub import HfApi, login
 
 # 1. Setup & Authentication
-HF_TOKEN = os.getenv("HF_TOKEN")  # Hugging Face token from environment
+HF_TOKEN = os.getenv("HF_TOKEN")
 REPO_ID = "shashankksaxena"
-login(token=HF_TOKEN)  # Log in to HF using token
+login(token=HF_TOKEN)
 api = HfApi()
 
-# --- STEP A: SYNC RAW DATA (SCALABILITY) ---
-# Upload local CSV to Hugging Face Dataset Hub if it exists
+# Define the artifact directory and ensure it exists
+artifact_path = "tourism_project/model_building"
+os.makedirs(artifact_path, exist_ok=True)
+
+# --- STEP A: SYNC RAW DATA ---
 if os.path.exists("tourism_project/data/tourism.csv"):
     api.upload_file(
         path_or_fileobj="tourism_project/data/tourism.csv",
@@ -39,68 +38,69 @@ if os.path.exists("tourism_project/data/tourism.csv"):
     )
 
 # --- STEP B: LOAD & CLEAN ---
-# Load dataset from Hugging Face Hub
 data_url = f"https://huggingface.co/datasets/{REPO_ID}/tourism-data/raw/main/tourism.csv"
 df = pd.read_csv(data_url)
 
-# Drop unnecessary columns and fix known typos
 df.drop(columns=['Unnamed: 0', 'CustomerID'], errors='ignore', inplace=True)
 df['Gender'] = df['Gender'].replace('Fe Male', 'Female')
 
-# Impute missing values: mode for categorical, median for numeric
+# Impute missing values
 for col in df.columns:
     if df[col].dtype == 'object':
         df[col] = df[col].fillna(df[col].mode()[0])
     else:
         df[col] = df[col].fillna(df[col].median())
 
-# --- STEP C: SPLIT & UPLOAD DATASETS (RUBRIC REQUIREMENT) ---
-# Stratified train-test split
+# --- STEP C: SPLIT & UPLOAD DATASETS ---
 train_df, test_df = train_test_split(
     df, test_size=0.2, random_state=42, stratify=df['ProdTaken']
 )
 
-# Save train/test locally for versioning
-train_df.to_csv("train.csv", index=False)
-test_df.to_csv("test.csv", index=False)
+# Define full local paths for artifacts
+train_file = os.path.join(artifact_path, "train.csv")
+test_file = os.path.join(artifact_path, "test.csv")
+model_file = os.path.join(artifact_path, "model.pkl")
 
-# Upload train/test splits to Hugging Face Dataset Hub
-api.upload_file(path_or_fileobj="train.csv", path_in_repo="train.csv", 
+# Save artifacts locally in the model_building folder
+train_df.to_csv(train_file, index=False)
+test_df.to_csv(test_file, index=False)
+
+# Upload train/test splits to Hugging Face
+api.upload_file(path_or_fileobj=train_file, path_in_repo="train.csv", 
                 repo_id=f"{REPO_ID}/tourism-data", repo_type="dataset")
-api.upload_file(path_or_fileobj="test.csv", path_in_repo="test.csv", 
+api.upload_file(path_or_fileobj=test_file, path_in_repo="test.csv", 
                 repo_id=f"{REPO_ID}/tourism-data", repo_type="dataset")
 
-print("Train and Test datasets versioned and uploaded to Hugging Face.")
+print(f"Artifacts saved to {artifact_path} and uploaded to Hugging Face.")
 
 # --- STEP D: ENCODING & TRAINING ---
-# Encode categorical columns
 le = LabelEncoder()
 cat_cols = train_df.select_dtypes(include=['object']).columns
 
+# Ensure encoding is consistent
 for col in cat_cols:
     train_df[col] = le.fit_transform(train_df[col])
     test_df[col] = le.transform(test_df[col])
 
-# Prepare features and target
 X_train = train_df.drop('ProdTaken', axis=1)
 y_train = train_df['ProdTaken']
 X_test = test_df.drop('ProdTaken', axis=1)
 y_test = test_df['ProdTaken']
 
-# Train XGBoost classifier
 model = XGBClassifier(n_estimators=200, max_depth=5, learning_rate=0.1, eval_metric='logloss')
 model.fit(X_train, y_train)
 
 # --- STEP E: EVALUATE & REGISTER MODEL ---
-# Evaluate on test set
 y_pred = model.predict(X_test)
 score = f1_score(y_test, y_pred)
 print(f"Model trained. Test F1 Score: {score:.4f}")
 
-# Save trained model locally and upload to HF Model Hub
-joblib.dump(model, "model.pkl")
+# Save the model pickle into the model_building folder
+joblib.dump(model, model_file)
+
+# Upload model to HF Model Hub
 api.upload_file(
-    path_or_fileobj="model.pkl",
+    path_or_fileobj=model_file,
     path_in_repo="model.pkl",
     repo_id=f"{REPO_ID}/tourism-model",
     repo_type="model"
