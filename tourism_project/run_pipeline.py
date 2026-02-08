@@ -1,12 +1,12 @@
 """
-Tourism Prediction Pipeline
+Tourism Prediction Pipeline with SMOTE
 
-This script automates the end-to-end workflow:
-1. Sync raw data to Hugging Face Dataset Hub.
-2. Load and clean the dataset.
-3. Split the dataset, save artifacts to 'tourism_project/model_building', and upload to HF.
-4. Train an XGBoost classifier.
-5. Register the model to the Hugging Face Model Hub.
+This script automates:
+1. Data Syncing (HF Dataset Hub)
+2. Cleaning & Encoding
+3. Stratified Splitting & SMOTE Balancing
+4. Training with XGBoost
+5. Evaluation & Registration (HF Model Hub)
 """
 
 import pandas as pd
@@ -15,94 +15,161 @@ import os
 from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import f1_score
+from sklearn.metrics import f1_score, accuracy_score
+from imblearn.over_sampling import SMOTE
 from huggingface_hub import HfApi, login
 
-# 1. Setup & Authentication
+# =========================
+# INITIALIZATION
+# =========================
+print("\n================ PIPELINE STARTED ================")
+print("[INIT] Initializing environment and Hugging Face connection...")
+
 HF_TOKEN = os.getenv("HF_TOKEN")
 REPO_ID = "shashankksaxena"
+
 login(token=HF_TOKEN)
 api = HfApi()
 
-# Define the artifact directory and ensure it exists
 artifact_path = "tourism_project/model_building"
 os.makedirs(artifact_path, exist_ok=True)
+print(f"[INIT] Artifact directory ready at: {artifact_path}")
 
-# --- STEP A: SYNC RAW DATA ---
-if os.path.exists("tourism_project/data/tourism.csv"):
+# =========================
+# STEP A: SYNC RAW DATA
+# =========================
+print("\n================ STEP A: DATA SYNC =================")
+local_raw_path = "tourism_project/data/tourism.csv"
+
+if os.path.exists(local_raw_path):
+    print("[STEP A] Raw data found locally. Uploading to Hugging Face...")
     api.upload_file(
-        path_or_fileobj="tourism_project/data/tourism.csv",
+        path_or_fileobj=local_raw_path,
         path_in_repo="tourism.csv",
         repo_id=f"{REPO_ID}/tourism-data",
         repo_type="dataset"
     )
+    print("[STEP A] Raw data successfully synced.")
+else:
+    print("[STEP A] WARNING: Raw data not found locally. Skipping upload.")
 
-# --- STEP B: LOAD & CLEAN ---
+# =========================
+# STEP B: LOAD & CLEAN DATA
+# =========================
+print("\n================ STEP B: LOAD & CLEAN =================")
 data_url = f"https://huggingface.co/datasets/{REPO_ID}/tourism-data/raw/main/tourism.csv"
-df = pd.read_csv(data_url)
+print(f"[STEP B] Loading data from: {data_url}")
 
+df = pd.read_csv(data_url)
+print(f"[STEP B] Data loaded successfully with shape: {df.shape}")
+
+print("[STEP B] Dropping identifier columns (if present)...")
 df.drop(columns=['Unnamed: 0', 'CustomerID'], errors='ignore', inplace=True)
+
+print("[STEP B] Fixing known categorical typos...")
 df['Gender'] = df['Gender'].replace('Fe Male', 'Female')
 
-# Impute missing values
+print("[STEP B] Handling missing values...")
 for col in df.columns:
     if df[col].dtype == 'object':
         df[col] = df[col].fillna(df[col].mode()[0])
     else:
         df[col] = df[col].fillna(df[col].median())
 
-# --- STEP C: SPLIT & UPLOAD DATASETS ---
-train_df, test_df = train_test_split(
-    df, test_size=0.2, random_state=42, stratify=df['ProdTaken']
+print("[STEP B] Missing value handling complete.")
+
+# =========================
+# STEP C: ENCODING
+# =========================
+print("\n================ STEP C: ENCODING =================")
+print("[STEP C] Encoding categorical features for SMOTE compatibility...")
+
+le = LabelEncoder()
+cat_cols = df.select_dtypes(include=['object']).columns
+
+for col in cat_cols:
+    df[col] = le.fit_transform(df[col])
+
+print(f"[STEP C] Encoded columns: {list(cat_cols)}")
+print(f"[STEP C] Dataset shape after encoding: {df.shape}")
+
+# =========================
+# STEP D: SPLIT & SMOTE
+# =========================
+print("\n================ STEP D: SPLIT & SMOTE =================")
+X = df.drop('ProdTaken', axis=1)
+y = df['ProdTaken']
+
+print("[STEP D] Performing stratified 80/20 train-test split...")
+X_train, X_test, y_train, y_test = train_test_split(
+    X, y, test_size=0.2, random_state=42, stratify=y
 )
 
-# Define full local paths for artifacts
+print(f"[STEP D] Train shape: {X_train.shape}, Test shape: {X_test.shape}")
+print(f"[STEP D] Before SMOTE - Positive class count: {sum(y_train == 1)}")
+
+print("[STEP D] Applying SMOTE to training data...")
+smote = SMOTE(random_state=42)
+X_train_res, y_train_res = smote.fit_resample(X_train, y_train)
+
+print(f"[STEP D] After SMOTE - Positive class count: {sum(y_train_res == 1)}")
+print(f"[STEP D] Balanced train shape: {X_train_res.shape}")
+
+# Save artifacts
+print("[STEP D] Saving train/test artifacts...")
 train_file = os.path.join(artifact_path, "train.csv")
 test_file = os.path.join(artifact_path, "test.csv")
-model_file = os.path.join(artifact_path, "model.pkl")
 
-# Save artifacts locally in the model_building folder
-train_df.to_csv(train_file, index=False)
-test_df.to_csv(test_file, index=False)
+pd.concat([X_train_res, y_train_res], axis=1).to_csv(train_file, index=False)
+pd.concat([X_test, y_test], axis=1).to_csv(test_file, index=False)
 
-# Upload train/test splits to Hugging Face
-api.upload_file(path_or_fileobj=train_file, path_in_repo="train.csv", 
-                repo_id=f"{REPO_ID}/tourism-data", repo_type="dataset")
-api.upload_file(path_or_fileobj=test_file, path_in_repo="test.csv", 
-                repo_id=f"{REPO_ID}/tourism-data", repo_type="dataset")
+print("[STEP D] Uploading processed datasets to Hugging Face...")
+api.upload_file(train_file, "train.csv", f"{REPO_ID}/tourism-data", repo_type="dataset")
+api.upload_file(test_file, "test.csv", f"{REPO_ID}/tourism-data", repo_type="dataset")
+print("[STEP D] Dataset upload complete.")
 
-print(f"Artifacts saved to {artifact_path} and uploaded to Hugging Face.")
+# =========================
+# STEP E: MODEL TRAINING
+# =========================
+print("\n================ STEP E: TRAINING =================")
+print("[STEP E] Initializing XGBoost model...")
 
-# --- STEP D: ENCODING & TRAINING ---
-le = LabelEncoder()
-cat_cols = train_df.select_dtypes(include=['object']).columns
+model = XGBClassifier(
+    n_estimators=200,
+    max_depth=5,
+    learning_rate=0.1,
+    eval_metric='logloss'
+)
 
-# Ensure encoding is consistent
-for col in cat_cols:
-    train_df[col] = le.fit_transform(train_df[col])
-    test_df[col] = le.transform(test_df[col])
+print("[STEP E] Training model on SMOTE-balanced data...")
+model.fit(X_train_res, y_train_res)
+print("[STEP E] Model training complete.")
 
-X_train = train_df.drop('ProdTaken', axis=1)
-y_train = train_df['ProdTaken']
-X_test = test_df.drop('ProdTaken', axis=1)
-y_test = test_df['ProdTaken']
+# =========================
+# STEP F: EVALUATION & REGISTRATION
+# =========================
+print("\n================ STEP F: EVALUATION =================")
+print("[STEP F] Generating predictions on original test distribution...")
 
-model = XGBClassifier(n_estimators=200, max_depth=5, learning_rate=0.1, eval_metric='logloss')
-model.fit(X_train, y_train)
-
-# --- STEP E: EVALUATE & REGISTER MODEL ---
 y_pred = model.predict(X_test)
-score = f1_score(y_test, y_pred)
-print(f"Model trained. Test F1 Score: {score:.4f}")
+score_f1 = f1_score(y_test, y_pred)
+score_acc = accuracy_score(y_test, y_pred)
 
-# Save the model pickle into the model_building folder
+print("[STEP F] Evaluation Metrics:")
+print(f" - Accuracy: {score_acc:.4f}")
+print(f" - F1 Score: {score_f1:.4f}")
+
+print("[STEP F] Saving trained model artifact...")
+model_file = os.path.join(artifact_path, "model.pkl")
 joblib.dump(model, model_file)
 
-# Upload model to HF Model Hub
+print("[STEP F] Uploading model to Hugging Face Model Hub...")
 api.upload_file(
     path_or_fileobj=model_file,
     path_in_repo="model.pkl",
     repo_id=f"{REPO_ID}/tourism-model",
     repo_type="model"
 )
-print("Best model registered in the Hugging Face Model Hub.")
+
+print("\n================ PIPELINE COMPLETED SUCCESSFULLY ================")
+print("[SUCCESS] Balanced model trained, evaluated, and registered 🚀")

@@ -6,7 +6,6 @@ import os
 from huggingface_hub import hf_hub_download
 
 # --- CONFIGURATION FROM ENVIRONMENT ---
-# These can be set in Hugging Face Space Settings > Variables/Secrets
 REPO_ID = os.getenv("REPO_ID", "shashankksaxena/tourism-model")
 FILENAME = os.getenv("MODEL_FILENAME", "model.pkl")
 
@@ -16,11 +15,17 @@ def load_model():
     model_path = hf_hub_download(repo_id=REPO_ID, filename=FILENAME)
     return joblib.load(model_path)
 
-model = load_model()
+# Add a try-except block to handle potential loading errors gracefully
+try:
+    model = load_model()
+except Exception as e:
+    st.error(f"Error loading model: {e}")
+    st.stop()
 
 st.set_page_config(page_title="Visit with Us - Predictor", layout="wide")
 st.title("Wellness Tourism Package Predictor")
-st.write(f"Currently using model from: {REPO_ID}")
+st.markdown("---")
+st.info(f"**Model Status:** Active | **Source:** {REPO_ID} | **Optimized with SMOTE**")
 
 # --- GET INPUTS AND SAVE INTO A DATAFRAME ---
 col1, col2 = st.columns(2)
@@ -40,14 +45,14 @@ with col2:
     star_rating = st.selectbox("Preferred Property Star", [3, 4, 5])
     marital_status = st.selectbox("Marital Status", ["Single", "Married", "Divorced", "Unmarried"])
     trips = st.number_input("Annual Trips", 1, 20, 2)
-    passport = st.selectbox("Has Passport?", [0, 1])
+    passport = st.selectbox("Has Passport? (1=Yes, 0=No)", [0, 1])
     pitch_score = st.slider("Pitch Satisfaction Score", 1, 5, 3)
-    own_car = st.selectbox("Owns a Car?", [0, 1])
+    own_car = st.selectbox("Owns a Car? (1=Yes, 0=No)", [0, 1])
     children = st.number_input("Children Visiting", 0, 5, 0)
     designation = st.selectbox("Designation", ["Executive", "Manager", "Senior Manager", "AVP", "VP"])
     income = st.number_input("Monthly Income", 1000, 200000, 25000)
 
-# Mappings (Matches LabelEncoder from Training)
+# Mappings (MUST match LabelEncoder output from training)
 mapping = {
     "TypeofContact": {"Company Invited": 0, "Self Enquiry": 1},
     "Occupation": {"Free Lancer": 0, "Large Business": 1, "Salaried": 2, "Small Business": 3},
@@ -79,12 +84,18 @@ input_data = pd.DataFrame([{
     'MonthlyIncome': income
 }])
 
+st.markdown("---")
+
 # --- PREDICTION ---
-if st.button("Predict Purchase"):
+if st.button("Generate Prediction"):
+    # XGBoost usually expects the columns in the exact same order as training
     prediction = model.predict(input_data)
     probability = model.predict_proba(input_data)[0][1]
     
     if prediction[0] == 1:
-        st.success(f"[Y] Likely to Purchase! (Probability: {probability:.2%})")
+        st.success(f"### Result: Likely to Purchase!")
+        st.write(f"Confidence Level: **{probability:.2%}**")
+        st.balloons()
     else:
-        st.error(f"[X] Unlikely to Purchase. (Probability: {1-probability:.2%})")
+        st.error(f"### Result: Unlikely to Purchase.")
+        st.write(f"Probability of purchase: **{probability:.2%}**")
